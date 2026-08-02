@@ -79,13 +79,18 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
     create: { id: guildId, name: guild.name },
   });
 
+  const creatorDisplayName =
+    interaction.guild?.members.cache.get(user.id)?.displayName ||
+    user.globalName ||
+    user.username;
+
   if (commandName === '투표생성') {
     const dateInput = interaction.options.getString('날짜', true);
     const startTimeOverride = interaction.options.getString('시작시간', false);
     const description = interaction.options.getString('설명', false);
 
     // 날짜 파싱 및 평일/주말 30분 단위 선택지 자동 생성
-    const { formattedTitle, isWeekend, timeSlots } = parseDateAndGetSlots(
+    const { formattedTitle, timeSlots } = parseDateAndGetSlots(
       dateInput,
       startTimeOverride
     );
@@ -117,8 +122,8 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
         },
       });
 
-      // 2. Embed 및 버튼/드롭다운 UI 생성
-      const { embed, rows } = buildPollEmbedAndButtons(poll);
+      // 2. Embed 및 버튼/드롭다운 UI 생성 (작성자 표시 닉네임 전달)
+      const { embed, rows } = buildPollEmbedAndButtons(poll, creatorDisplayName);
 
       // 3. 디스코드 메시지 전송
       const message = await interaction.editReply({
@@ -172,7 +177,7 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
         const textChannel = channel as TextChannel;
         const msg = await textChannel.messages.fetch(poll.messageId).catch(() => null);
         if (msg) {
-          const { embed, rows } = buildPollEmbedAndButtons(updatedPoll);
+          const { embed, rows } = buildPollEmbedAndButtons(updatedPoll, creatorDisplayName);
           await msg.edit({ embeds: [embed], components: rows });
         }
       }
@@ -207,7 +212,7 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
       });
     }
 
-    const { embed, rows } = buildPollEmbedAndButtons(poll);
+    const { embed, rows } = buildPollEmbedAndButtons(poll, creatorDisplayName);
     return interaction.reply({
       content: `📊 **투표 #${poll.id} 현황 조회 결과**`,
       embeds: [embed],

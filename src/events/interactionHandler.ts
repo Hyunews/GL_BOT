@@ -158,7 +158,7 @@ export async function handleButtonInteraction(
   // 메시지 갱신 및 유저에게 응답
   await interaction.update({ embeds: [embed], components: rows });
 
-  // 추가/제거 변경점 피드백 메시지 생성
+  // 추가/제거 및 선착순 10명 참석/대기 피드백 메시지 생성
   let statusMsg = '';
   if (action === 'attend') {
     const addedIds = finalOptionIds.filter((id) => !previousOptionIds.includes(id));
@@ -166,7 +166,22 @@ export async function handleButtonInteraction(
 
     const addedLabels = updatedPoll.options.filter((o) => addedIds.includes(o.id)).map((o) => o.label);
     const removedLabels = updatedPoll.options.filter((o) => removedIds.includes(o.id)).map((o) => o.label);
-    const currentLabels = updatedPoll.options.filter((o) => finalOptionIds.includes(o.id)).map((o) => o.label);
+
+    // 각 신청 시간대별 선착순 10명 이내(참석) vs 11명 이상(대기) 파악
+    const currentSummaries = updatedPoll.options
+      .filter((o) => finalOptionIds.includes(o.id))
+      .map((o) => {
+        const optionVotes = (updatedPoll.votes || [])
+          .filter((v) => v.optionId === o.id && v.status === 'ATTEND')
+          .sort((a, b) => a.id - b.id);
+        const userIndex = optionVotes.findIndex((v) => v.userId === userId);
+        if (userIndex >= 0 && userIndex < 10) {
+          return `${o.label} (✅ 참석 ${userIndex + 1}번째)`;
+        } else if (userIndex >= 10) {
+          return `${o.label} (⏳ 대기 ${userIndex - 9}번)`;
+        }
+        return o.label;
+      });
 
     statusMsg = `✅ **참석 시간대가 성공적으로 갱신되었습니다!**\n`;
     if (addedLabels.length > 0) {
@@ -175,7 +190,7 @@ export async function handleButtonInteraction(
     if (removedLabels.length > 0) {
       statusMsg += `➖ **제외된 시간**: ${removedLabels.join(', ')}\n`;
     }
-    statusMsg += `⏰ **최종 참석 시간대**: ${currentLabels.length > 0 ? currentLabels.join(', ') : '_없음_'} (${currentLabels.length}개)`;
+    statusMsg += `⏰ **현재 신청 시간대**: ${currentSummaries.length > 0 ? currentSummaries.join(', ') : '_없음_'}`;
   } else if (action === 'absent') {
     statusMsg = '🔴 **[불참]** 으로 투표가 완료되었습니다. (기존 참석 시간대가 모두 취소되었습니다)';
   } else {
