@@ -190,8 +190,14 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
   const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
   rows.push(selectRow);
 
-  // 공통 하단 상태 버튼 (불참, 미정/대기, 현황 갱신)
+  // 공통 하단 상태 버튼 (전체 참석, 불참, 미정/대기, 현황 갱신)
   const statusRow = new ActionRowBuilder<ButtonBuilder>();
+
+  const allAttendBtn = new ButtonBuilder()
+    .setCustomId(`vote_${poll.id}_all`)
+    .setLabel('🟢 전체 참석')
+    .setStyle(ButtonStyle.Success)
+    .setDisabled(isClosed);
 
   const absentBtn = new ButtonBuilder()
     .setCustomId(`vote_${poll.id}_absent`)
@@ -210,7 +216,7 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
     .setLabel('🔄 현황 갱신')
     .setStyle(ButtonStyle.Secondary);
 
-  statusRow.addComponents(absentBtn, pendingBtn, refreshBtn);
+  statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn);
   rows.push(statusRow);
 
   return { embed, rows };

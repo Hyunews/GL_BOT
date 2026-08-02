@@ -91,7 +91,23 @@ export async function handleButtonInteraction(
   const finalOptionIds = Array.from(finalOptionSet);
 
   // DB 투표 저장 처리
-  if (action === 'attend') {
+  if (action === 'all') {
+    const allOptionIds = poll.options.map((o) => o.id);
+    await prisma.$transaction([
+      prisma.vote.deleteMany({
+        where: { pollId: poll.id, userId },
+      }),
+      prisma.vote.createMany({
+        data: allOptionIds.map((optId) => ({
+          pollId: poll.id,
+          userId,
+          userDisplayName,
+          status: 'ATTEND',
+          optionId: optId,
+        })),
+      }),
+    ]);
+  } else if (action === 'attend') {
     if (finalOptionIds.length === 0) {
       // 선택된 항목이 0개가 되면 참석 내역 지우기
       await prisma.vote.deleteMany({
@@ -160,7 +176,25 @@ export async function handleButtonInteraction(
 
   // 추가/제거 및 선착순 10명 참석/대기 피드백 메시지 생성
   let statusMsg = '';
-  if (action === 'attend') {
+  if (action === 'all') {
+    const allOptionIds = updatedPoll.options.map((o) => o.id);
+    const currentSummaries = updatedPoll.options
+      .filter((o) => allOptionIds.includes(o.id))
+      .map((o) => {
+        const optionVotes = (updatedPoll.votes || [])
+          .filter((v) => v.optionId === o.id && v.status === 'ATTEND')
+          .sort((a, b) => a.id - b.id);
+        const userIndex = optionVotes.findIndex((v) => v.userId === userId);
+        if (userIndex >= 0 && userIndex < 10) {
+          return `${o.label} (✅ 참석 ${userIndex + 1}번째)`;
+        } else if (userIndex >= 10) {
+          return `${o.label} (⏳ 대기 ${userIndex - 9}번)`;
+        }
+        return o.label;
+      });
+
+    statusMsg = `🟢 **모든 시간대 [전체 참석]으로 등록되었습니다!**\n⏰ **현재 신청 시간대**: ${currentSummaries.join(', ')}`;
+  } else if (action === 'attend') {
     const addedIds = finalOptionIds.filter((id) => !previousOptionIds.includes(id));
     const removedIds = previousOptionIds.filter((id) => !finalOptionIds.includes(id));
 
