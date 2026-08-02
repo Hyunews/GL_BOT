@@ -1,0 +1,189 @@
+import { ButtonInteraction, StringSelectMenuInteraction } from 'discord.js';
+import { prisma } from '../db/client';
+import { buildPollEmbedAndButtons } from '../utils/embedBuilder';
+
+export async function handleButtonInteraction(
+  interaction: ButtonInteraction | StringSelectMenuInteraction
+) {
+  let pollId: number = 0;
+  let action: string = '';
+  let selectedOptionIds: number[] = [];
+
+  if (interaction.isStringSelectMenu()) {
+    // Select Menu에서 클릭/선택된 optionId 목록
+    // Format: vote_{pollId}_attend_{optionId}
+    const values = interaction.values;
+    if (!values || values.length === 0) return;
+
+    const firstPart = values[0].split('_');
+    pollId = parseInt(firstPart[1], 10);
+    action = firstPart[2]; // 'attend'
+
+    selectedOptionIds = values.map((val) => {
+      const p = val.split('_');
+      return parseInt(p[3], 10);
+    });
+  } else {
+    // Button Interaction
+    const customId = interaction.customId;
+    if (!customId.startsWith('vote_')) return;
+
+    const parts = customId.split('_');
+    pollId = parseInt(parts[1], 10);
+    action = parts[2];
+    const optionIdStr = parts[3];
+
+    if (action === 'attend' && optionIdStr) {
+      selectedOptionIds = [parseInt(optionIdStr, 10)];
+    }
+  }
+
+  if (isNaN(pollId) || pollId <= 0) return;
+
+  const poll = await prisma.poll.findUnique({
+    where: { id: pollId },
+    include: { options: true, votes: true },
+  });
+
+  if (!poll) {
+    return interaction.reply({
+      content: '❌ 존재하지 않거나 삭제된 투표입니다.',
+      ephemeral: true,
+    });
+  }
+
+  if (action === 'refresh') {
+    const { embed, rows } = buildPollEmbedAndButtons(poll);
+    await interaction.update({ embeds: [embed], components: rows });
+    return;
+  }
+
+  if (poll.status === 'CLOSED') {
+    return interaction.reply({
+      content: '🔒 이 투표는 이미 마감되었습니다.',
+      ephemeral: true,
+    });
+  }
+
+  const userId = interaction.user.id;
+  const userDisplayName =
+    interaction.guild?.members.cache.get(userId)?.displayName ||
+    interaction.user.globalName ||
+    interaction.user.username;
+
+  // 기존 유저의 참석 옵션 ID 목록 (DB 조회)
+  const previousOptionIds = poll.votes
+    .filter((v) => v.userId === userId && v.status === 'ATTEND' && v.optionId !== null)
+    .map((v) => v.optionId as number);
+
+  // 누적/토글(Merge & Toggle) 로직:
+  // 유저가 기존에 가지고 있던 시간대면 제거(Toggle OFF), 없던 시간대면 추가(Toggle ON)
+  const finalOptionSet = new Set<number>(previousOptionIds);
+
+  selectedOptionIds.forEach((optId) => {
+    if (finalOptionSet.has(optId)) {
+      finalOptionSet.delete(optId); // 이미 선택했던 시간이면 제거
+    } else {
+      finalOptionSet.add(optId); // 안 고른 시간이면 추가
+    }
+  });
+
+  const finalOptionIds = Array.from(finalOptionSet);
+
+  // DB 투표 저장 처리
+  if (action === 'attend') {
+    if (finalOptionIds.length === 0) {
+      // 선택된 항목이 0개가 되면 참석 내역 지우기
+      await prisma.vote.deleteMany({
+        where: { pollId: poll.id, userId },
+      });
+    } else {
+      await prisma.$transaction([
+        prisma.vote.deleteMany({
+          where: { pollId: poll.id, userId },
+        }),
+        prisma.vote.createMany({
+          data: finalOptionIds.map((optId) => ({
+            pollId: poll.id,
+            userId,
+            userDisplayName,
+            status: 'ATTEND',
+            optionId: optId,
+          })),
+        }),
+      ]);
+    }
+  } else if (action === 'absent') {
+    await prisma.$transaction([
+      prisma.vote.deleteMany({
+        where: { pollId: poll.id, userId },
+      }),
+      prisma.vote.create({
+        data: {
+          pollId: poll.id,
+          userId,
+          userDisplayName,
+          status: 'ABSENT',
+          optionId: null,
+        },
+      }),
+    ]);
+  } else if (action === 'pending') {
+    await prisma.$transaction([
+      prisma.vote.deleteMany({
+        where: { pollId: poll.id, userId },
+      }),
+      prisma.vote.create({
+        data: {
+          pollId: poll.id,
+          userId,
+          userDisplayName,
+          status: 'PENDING',
+          optionId: null,
+        },
+      }),
+    ]);
+  }
+
+  // 갱신된 전체 투표 데이터 재조회
+  const updatedPoll = await prisma.poll.findUnique({
+    where: { id: poll.id },
+    include: { options: true, votes: true },
+  });
+
+  if (!updatedPoll) return;
+
+  const { embed, rows } = buildPollEmbedAndButtons(updatedPoll);
+
+  // 메시지 갱신 및 유저에게 응답
+  await interaction.update({ embeds: [embed], components: rows });
+
+  // 추가/제거 변경점 피드백 메시지 생성
+  let statusMsg = '';
+  if (action === 'attend') {
+    const addedIds = finalOptionIds.filter((id) => !previousOptionIds.includes(id));
+    const removedIds = previousOptionIds.filter((id) => !finalOptionIds.includes(id));
+
+    const addedLabels = updatedPoll.options.filter((o) => addedIds.includes(o.id)).map((o) => o.label);
+    const removedLabels = updatedPoll.options.filter((o) => removedIds.includes(o.id)).map((o) => o.label);
+    const currentLabels = updatedPoll.options.filter((o) => finalOptionIds.includes(o.id)).map((o) => o.label);
+
+    statusMsg = `✅ **참석 시간대가 성공적으로 갱신되었습니다!**\n`;
+    if (addedLabels.length > 0) {
+      statusMsg += `➕ **새로 추가된 시간**: ${addedLabels.join(', ')}\n`;
+    }
+    if (removedLabels.length > 0) {
+      statusMsg += `➖ **제외된 시간**: ${removedLabels.join(', ')}\n`;
+    }
+    statusMsg += `⏰ **최종 참석 시간대**: ${currentLabels.length > 0 ? currentLabels.join(', ') : '_없음_'} (${currentLabels.length}개)`;
+  } else if (action === 'absent') {
+    statusMsg = '🔴 **[불참]** 으로 투표가 완료되었습니다. (기존 참석 시간대가 모두 취소되었습니다)';
+  } else {
+    statusMsg = '🟡 **[미정/대기]** 로 투표가 완료되었습니다. (기존 참석 시간대가 보류 처리되었습니다)';
+  }
+
+  await interaction.followUp({
+    content: statusMsg,
+    ephemeral: true,
+  });
+}

@@ -1,0 +1,53 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Guild {
+  id        String   @id
+  name      String
+  createdAt DateTime @default(now())
+  polls     Poll[]
+}
+
+model Poll {
+  id          Int          @id @default(autoincrement())
+  guildId     String
+  guild       Guild        @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channelId   String
+  messageId   String       @unique
+  title       String
+  description String?
+  status      String       @default("OPEN") // OPEN, CLOSED
+  creatorId   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  options     PollOption[]
+  votes       Vote[]
+}
+
+model PollOption {
+  id         Int    @id @default(autoincrement())
+  pollId     Int
+  poll       Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  label      String // 예: "8/4 19:00", "8/4 20:00"
+  orderIndex Int    @default(0)
+  votes      Vote[]
+}
+
+model Vote {
+  id              Int         @id @default(autoincrement())
+  pollId          Int
+  poll            Poll        @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  userId          String
+  userDisplayName String
+  status          String      // "ATTEND" | "ABSENT" | "PENDING"
+  optionId        Int?        // ATTEND인 경우 선택한 시간대 옵션 ID
+  option          PollOption? @relation(fields: [optionId], references: [id], onDelete: SetNull)
+  updatedAt       DateTime    @updatedAt
+
+  @@index([pollId, userId])
+}
