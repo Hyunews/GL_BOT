@@ -161,6 +161,20 @@ export async function handleButtonInteraction(
 
   if (isNaN(pollId) || pollId <= 0) return;
 
+  // 현재 메시지의 접기/펼치기 상태 파악
+  let isExpanded = false;
+  if (interaction.message && interaction.message.components.length > 1) {
+    const statusRow = interaction.message.components[1] as any;
+    if (statusRow && statusRow.components) {
+      const expandBtn = statusRow.components.find(
+        (c: any) => c.customId && typeof c.customId === 'string' && c.customId.includes('_toggleexpand_')
+      );
+      if (expandBtn && expandBtn.customId?.includes('_close')) {
+        isExpanded = true;
+      }
+    }
+  }
+
   const poll = await prisma.poll.findUnique({
     where: { id: pollId },
     include: { options: true, votes: true },
@@ -173,8 +187,18 @@ export async function handleButtonInteraction(
     });
   }
 
+  if (action === 'toggleexpand') {
+    const parts = (interaction.isButton() ? interaction.customId : '').split('_');
+    const targetState = parts[3]; // 'open' or 'close'
+    const newIsExpanded = targetState === 'open';
+
+    const { embed, rows } = buildPollEmbedAndButtons(poll, undefined, newIsExpanded);
+    await interaction.update({ embeds: [embed], components: rows });
+    return;
+  }
+
   if (action === 'refresh') {
-    const { embed, rows } = buildPollEmbedAndButtons(poll);
+    const { embed, rows } = buildPollEmbedAndButtons(poll, undefined, isExpanded);
     await interaction.update({ embeds: [embed], components: rows });
     return;
   }
@@ -288,7 +312,7 @@ export async function handleButtonInteraction(
 
   if (!updatedPoll) return;
 
-  const { embed, rows } = buildPollEmbedAndButtons(updatedPoll);
+  const { embed, rows } = buildPollEmbedAndButtons(updatedPoll, undefined, isExpanded);
 
   // 메시지 갱신 및 유저에게 응답
   await interaction.update({ embeds: [embed], components: rows });

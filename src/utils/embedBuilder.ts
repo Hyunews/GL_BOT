@@ -29,7 +29,11 @@ export interface FullPollData {
   }[];
 }
 
-export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?: string) {
+export function buildPollEmbedAndButtons(
+  poll: FullPollData,
+  creatorDisplayName?: string,
+  isExpanded: boolean = false
+) {
   const isClosed = poll.status === 'CLOSED';
 
   // 옵션별 참석자 분류 (선착순 정렬 보장: vote.id 순)
@@ -65,7 +69,7 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
     poll.votes.find((v) => v.userId === poll.creatorId)?.userDisplayName ||
     '관리자';
 
-  // Embed 구성 (시간대별 인원 요약만 표시하여 가시성 확보)
+  // Embed 구성
   const embed = new EmbedBuilder()
     .setTitle(`🏆 ${poll.title}`)
     .setDescription(
@@ -83,32 +87,73 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
 
   let totalConfirmedSlots = 0;
   let totalWaitlistSlots = 0;
-  const slotSummaryLines: string[] = [];
 
-  poll.options.forEach((opt) => {
-    const allMembers = optionVotesMap[opt.id] || [];
-    const mainRoster = allMembers.slice(0, 10);
-    const waitlist = allMembers.slice(10);
+  if (isExpanded) {
+    // 🔽 명단 펼친 상태: 시간대별 상세 멘션 명단 표시
+    poll.options.forEach((opt) => {
+      const allMembers = optionVotesMap[opt.id] || [];
+      const mainRoster = allMembers.slice(0, 10);
+      const waitlist = allMembers.slice(10);
 
-    totalConfirmedSlots += mainRoster.length;
-    totalWaitlistSlots += waitlist.length;
+      totalConfirmedSlots += mainRoster.length;
+      totalWaitlistSlots += waitlist.length;
 
-    if (allMembers.length >= 10) {
-      slotSummaryLines.push(
-        `⏰ **${opt.label}** : **10/10명** 🔒 마감${
-          waitlist.length > 0 ? ` (⏳ 대기 **${waitlist.length}명**)` : ''
-        }`
-      );
-    } else {
-      slotSummaryLines.push(`⏰ **${opt.label}** : **${allMembers.length}/10명**`);
-    }
-  });
+      const mainText =
+        mainRoster.length > 0
+          ? mainRoster.map((m) => `<@${m.userId}>`).join(', ')
+          : '_참석자 없음_';
 
-  embed.addFields({
-    name: '📊 시간대별 참석 현황 요약',
-    value: slotSummaryLines.join('\n') || '_등록된 시간대가 없습니다._',
-    inline: false,
-  });
+      let fieldTitle = '';
+      if (allMembers.length >= 10) {
+        fieldTitle = `⏰ ${opt.label} (10/10명 🔒 마감${
+          waitlist.length > 0 ? ` | ⏳ 대기 ${waitlist.length}명` : ''
+        })`;
+      } else {
+        fieldTitle = `⏰ ${opt.label} (${allMembers.length}/10명)`;
+      }
+
+      let fieldValue = mainText;
+      if (waitlist.length > 0) {
+        const waitText = waitlist
+          .map((m, idx) => `<@${m.userId}>(대기${idx + 1})`)
+          .join(', ');
+        fieldValue += `\n> ⏳ **대기 명단**: ${waitText}`;
+      }
+
+      embed.addFields({
+        name: fieldTitle,
+        value: fieldValue,
+        inline: false,
+      });
+    });
+  } else {
+    // 🔼 명단 접은 상태: 요약 현황만 깔끔하게 표시
+    const slotSummaryLines: string[] = [];
+    poll.options.forEach((opt) => {
+      const allMembers = optionVotesMap[opt.id] || [];
+      const mainRoster = allMembers.slice(0, 10);
+      const waitlist = allMembers.slice(10);
+
+      totalConfirmedSlots += mainRoster.length;
+      totalWaitlistSlots += waitlist.length;
+
+      if (allMembers.length >= 10) {
+        slotSummaryLines.push(
+          `⏰ **${opt.label}** : **10/10명** 🔒 마감${
+            waitlist.length > 0 ? ` (⏳ 대기 **${waitlist.length}명**)` : ''
+          }`
+        );
+      } else {
+        slotSummaryLines.push(`⏰ **${opt.label}** : **${allMembers.length}/10명**`);
+      }
+    });
+
+    embed.addFields({
+      name: '📊 시간대별 참석 현황 요약',
+      value: slotSummaryLines.join('\n') || '_등록된 시간대가 없습니다._',
+      inline: false,
+    });
+  }
 
   // 불참 및 미정 필드
   embed.addFields(
@@ -149,7 +194,7 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
 
   const rows: ActionRowBuilder<any>[] = [];
 
-  // Row 0: 시간대별 명단 확인 드롭다운 메뉴 (요청사항 1)
+  // Row 0: 시간대별 명단 확인 드롭다운 메뉴
   const rosterSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`vote_${poll.id}_viewroster`)
     .setPlaceholder('🔍 시간대별 참석자/대기자 명단 보기');
@@ -182,7 +227,7 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
   );
   rows.push(rosterRow);
 
-  // Row 1: 공통 상태 버튼 (전체 참석, 불참, 미정/대기, 현황 갱신)
+  // Row 1: 공통 상태 버튼 + 명단 펼치기/접기 버튼
   const statusRow = new ActionRowBuilder<ButtonBuilder>();
 
   const allAttendBtn = new ButtonBuilder()
@@ -208,10 +253,15 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
     .setLabel('🔄 현황 갱신')
     .setStyle(ButtonStyle.Secondary);
 
-  statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn);
+  const toggleExpandBtn = new ButtonBuilder()
+    .setCustomId(`vote_${poll.id}_toggleexpand_${isExpanded ? 'close' : 'open'}`)
+    .setLabel(isExpanded ? '🔼 명단 접기' : '🔽 명단 펼치기')
+    .setStyle(isExpanded ? ButtonStyle.Primary : ButtonStyle.Secondary);
+
+  statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn, toggleExpandBtn);
   rows.push(statusRow);
 
-  // Row 2~4: 시간대 투표 조작 (1클릭 토글 버튼 그리드 / Multi-Select Menu) (요청사항 2)
+  // Row 2~4: 시간대 투표 조작 (1클릭 토글 버튼 그리드 / Multi-Select Menu)
   if (poll.options.length <= 15) {
     let currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
 
@@ -240,7 +290,6 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
       }
     });
   } else {
-    // 15개 초과 시 Multi-Select Menu + 주요 10개 버튼 배치
     const voteSelectMenu = new StringSelectMenuBuilder()
       .setCustomId(`vote_${poll.id}_select`)
       .setPlaceholder('⏰ 참석 가능한 시간대 선택 (다중 선택 가능)')
