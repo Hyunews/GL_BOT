@@ -1,6 +1,6 @@
 import { ButtonInteraction, StringSelectMenuInteraction } from 'discord.js';
 import { prisma } from '../db/client';
-import { buildPollEmbedAndButtons } from '../utils/embedBuilder';
+import { buildPollEmbedAndButtons, buildExpandedRosterEmbed } from '../utils/embedBuilder';
 
 export async function handleButtonInteraction(
   interaction: ButtonInteraction | StringSelectMenuInteraction
@@ -170,6 +170,25 @@ export async function handleButtonInteraction(
     return interaction.reply({
       content: '❌ 존재하지 않거나 삭제된 투표입니다.',
       ephemeral: true,
+    });
+  }
+
+  // 🔽 사용자 개별 전용 명단 펼치기 클릭 시 (Ephemeral 카드 전송)
+  if (action === 'expand' && interaction.isButton()) {
+    const { embed: expandedEmbed, closeRow } = buildExpandedRosterEmbed(poll);
+    return interaction.reply({
+      embeds: [expandedEmbed],
+      components: [closeRow],
+      ephemeral: true,
+    });
+  }
+
+  // 🔼 사용자 개별 전용 명단 접기 클릭 시 (Ephemeral 카드 접기)
+  if (action === 'close' && interaction.isButton()) {
+    return interaction.update({
+      content: '🔒 명단 카드가 접혔습니다.',
+      embeds: [],
+      components: [],
     });
   }
 

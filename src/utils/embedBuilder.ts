@@ -178,12 +178,12 @@ export function buildPollEmbedAndButtons(
     .setLabel('🔄 현황 갱신')
     .setStyle(ButtonStyle.Secondary);
 
-  const rosterBtn = new ButtonBuilder()
-    .setCustomId(`vote_${poll.id}_roster_ephemeral`)
-    .setLabel('📋 상세 명단 보기')
+  const expandBtn = new ButtonBuilder()
+    .setCustomId(`vote_${poll.id}_expand_private`)
+    .setLabel('🔽 명단 펼치기')
     .setStyle(ButtonStyle.Primary);
 
-  statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn, rosterBtn);
+  statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn, expandBtn);
   rows.push(statusRow);
 
   // Row 1~4: 시간대 투표 조작 (1클릭 토글 버튼 그리드 / Multi-Select Menu)
@@ -273,4 +273,87 @@ export function buildPollEmbedAndButtons(
   }
 
   return { embed, rows };
+}
+
+// 사용자 개별 전용 에페메랄 명단 펼치기 Embed 생성 함수
+export function buildExpandedRosterEmbed(poll: FullPollData) {
+  const optionVotesMap: Record<number, { userId: string }[]> = {};
+  poll.options.forEach((opt) => {
+    optionVotesMap[opt.id] = [];
+  });
+  const sortedVotes = [...poll.votes].sort((a, b) => a.id - b.id);
+  sortedVotes.forEach((v) => {
+    if (v.status === 'ATTEND' && v.optionId && optionVotesMap[v.optionId]) {
+      if (!optionVotesMap[v.optionId].some((item) => item.userId === v.userId)) {
+        optionVotesMap[v.optionId].push({ userId: v.userId });
+      }
+    }
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📋 ${poll.title} - 상세 명단`)
+    .setDescription('*(나에게만 보이는 개인 명단 카드입니다)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    .setColor(0x5865f2)
+    .setTimestamp();
+
+  poll.options.forEach((opt) => {
+    const members = optionVotesMap[opt.id] || [];
+    const mainRoster = members.slice(0, 10);
+    const waitlist = members.slice(10);
+
+    const mainText =
+      mainRoster.length > 0
+        ? mainRoster.map((m) => `<@${m.userId}>`).join(', ')
+        : '_참석자 없음_';
+
+    let fieldTitle = '';
+    if (members.length >= 10) {
+      fieldTitle = `⏰ ${opt.label} (10/10명 🔒 마감${
+        waitlist.length > 0 ? ` | ⏳ 대기 ${waitlist.length}명` : ''
+      })`;
+    } else {
+      fieldTitle = `⏰ ${opt.label} (${members.length}/10명)`;
+    }
+
+    let fieldValue = mainText;
+    if (waitlist.length > 0) {
+      const waitText = waitlist.map((m, idx) => `<@${m.userId}>(대기${idx + 1})`).join(', ');
+      fieldValue += `\n> ⏳ **대기 명단**: ${waitText}`;
+    }
+
+    embed.addFields({
+      name: fieldTitle,
+      value: fieldValue,
+      inline: false,
+    });
+  });
+
+  const absentMentions = poll.votes
+    .filter((v) => v.status === 'ABSENT')
+    .map((v) => `<@${v.userId}>`);
+  const pendingMentions = poll.votes
+    .filter((v) => v.status === 'PENDING')
+    .map((v) => `<@${v.userId}>`);
+
+  embed.addFields(
+    {
+      name: `🔴 불참 (${absentMentions.length}명)`,
+      value: absentMentions.length > 0 ? absentMentions.join(', ') : '_없음_',
+      inline: true,
+    },
+    {
+      name: `🟡 미정/대기 (${pendingMentions.length}명)`,
+      value: pendingMentions.length > 0 ? pendingMentions.join(', ') : '_없음_',
+      inline: true,
+    }
+  );
+
+  const closeBtn = new ButtonBuilder()
+    .setCustomId(`vote_${poll.id}_close_private`)
+    .setLabel('🔼 명단 접기')
+    .setStyle(ButtonStyle.Secondary);
+
+  const closeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(closeBtn);
+
+  return { embed, closeRow };
 }
