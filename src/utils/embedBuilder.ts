@@ -58,20 +58,20 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
     }
   });
 
-  // 작성자 표시 닉네임 구하기 (Footer 텍스트에는 <@ID> 멘션 렌더링이 안 되므로 이름으로 출력)
+  // 작성자 표시 닉네임 구하기
   const creatorName =
     creatorDisplayName ||
     poll.creatorDisplayName ||
     poll.votes.find((v) => v.userId === poll.creatorId)?.userDisplayName ||
     '관리자';
 
-  // Embed 구성
+  // Embed 구성 (시간대별 인원 요약만 표시하여 가시성 확보)
   const embed = new EmbedBuilder()
     .setTitle(`🏆 ${poll.title}`)
     .setDescription(
       poll.description
         ? `${poll.description}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-        : '아래 드롭다운에서 **가능한 시간대를 모두 체크**해 주세요!\n*(각 시간대별 **최대 10명 선착순 참석**, 11번째부터는 **대기자**로 자동 등록됩니다)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        : '아래 **시간대 버튼을 클릭**하여 신청/취소하거나 드롭다운을 이용해 주세요!\n*(시간대별 **최대 10명 선착순 참석**, 11번째부터는 **대기자**로 자동 등록됩니다)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor(isClosed ? 0x95a5a6 : 0x5865f2)
     .setTimestamp(poll.createdAt)
@@ -83,8 +83,8 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
 
   let totalConfirmedSlots = 0;
   let totalWaitlistSlots = 0;
+  const slotSummaryLines: string[] = [];
 
-  // 시간대별 슬롯 필드 추가 (최대 10명 참석, 11명부터 대기)
   poll.options.forEach((opt) => {
     const allMembers = optionVotesMap[opt.id] || [];
     const mainRoster = allMembers.slice(0, 10);
@@ -93,36 +93,24 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
     totalConfirmedSlots += mainRoster.length;
     totalWaitlistSlots += waitlist.length;
 
-    const mainText =
-      mainRoster.length > 0
-        ? mainRoster.map((m) => `<@${m.userId}>`).join(', ')
-        : '_참석자 없음_';
-
-    let fieldTitle = '';
     if (allMembers.length >= 10) {
-      fieldTitle = `⏰ ${opt.label} (10/10명 🔒 마감${
-        waitlist.length > 0 ? ` | ⏳ 대기 ${waitlist.length}명` : ''
-      })`;
+      slotSummaryLines.push(
+        `⏰ **${opt.label}** : **10/10명** 🔒 마감${
+          waitlist.length > 0 ? ` (⏳ 대기 **${waitlist.length}명**)` : ''
+        }`
+      );
     } else {
-      fieldTitle = `⏰ ${opt.label} (${allMembers.length}/10명)`;
+      slotSummaryLines.push(`⏰ **${opt.label}** : **${allMembers.length}/10명**`);
     }
-
-    let fieldValue = mainText;
-    if (waitlist.length > 0) {
-      const waitText = waitlist
-        .map((m, idx) => `<@${m.userId}>(대기${idx + 1})`)
-        .join(', ');
-      fieldValue += `\n> ⏳ **대기 명단**: ${waitText}`;
-    }
-
-    embed.addFields({
-      name: fieldTitle,
-      value: fieldValue,
-      inline: false,
-    });
   });
 
-  // 불참 및 미정 필드 추가
+  embed.addFields({
+    name: '📊 시간대별 참석 현황 요약',
+    value: slotSummaryLines.join('\n') || '_등록된 시간대가 없습니다._',
+    inline: false,
+  });
+
+  // 불참 및 미정 필드
   embed.addFields(
     {
       name: `🔴 불참 (${absentList.length}명)`,
@@ -161,36 +149,40 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
 
   const rows: ActionRowBuilder<any>[] = [];
 
-  // 다중 선택(Multi-Select) 지원 드롭다운 메뉴 생성
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`vote_${poll.id}_select`)
-    .setPlaceholder('⏰ 참석 가능한 시간대를 모두 체크하세요 (다중 선택 가능)')
-    .setMinValues(1)
-    .setMaxValues(poll.options.length)
-    .setDisabled(isClosed);
+  // Row 0: 시간대별 명단 확인 드롭다운 메뉴 (요청사항 1)
+  const rosterSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`vote_${poll.id}_viewroster`)
+    .setPlaceholder('🔍 시간대별 참석자/대기자 명단 보기');
+
+  rosterSelectMenu.addOptions(
+    new StringSelectMenuOptionBuilder()
+      .setLabel('📋 [전체] 시간대별 참석자/대기자 명단 보기')
+      .setValue(`vote_${poll.id}_roster_all`)
+      .setDescription('모든 시간대의 상세 참석자 및 대기자 멘션 명단을 확인합니다.')
+      .setEmoji('📋')
+  );
 
   poll.options.forEach((opt) => {
     const allMembers = optionVotesMap[opt.id] || [];
-    const mainCount = Math.min(allMembers.length, 10);
     const waitCount = Math.max(0, allMembers.length - 10);
-
-    let label = `참석: ${opt.label} (${mainCount}/10명)`;
+    let optLabel = `${opt.label} 명단 (${allMembers.length}명)`;
     if (allMembers.length >= 10) {
-      label = `참석: ${opt.label} (10/10명 마감${waitCount > 0 ? ` | 대기 ${waitCount}명` : ''})`;
+      optLabel = `${opt.label} 명단 (10명 마감${waitCount > 0 ? `, 대기 ${waitCount}명` : ''})`;
     }
-
-    selectMenu.addOptions(
+    rosterSelectMenu.addOptions(
       new StringSelectMenuOptionBuilder()
-        .setLabel(label)
-        .setValue(`vote_${poll.id}_attend_${opt.id}`)
+        .setLabel(optLabel)
+        .setValue(`vote_${poll.id}_roster_${opt.id}`)
         .setEmoji(allMembers.length >= 10 ? '⏳' : '⏰')
     );
   });
 
-  const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-  rows.push(selectRow);
+  const rosterRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    rosterSelectMenu
+  );
+  rows.push(rosterRow);
 
-  // 공통 하단 상태 버튼 (전체 참석, 불참, 미정/대기, 현황 갱신)
+  // Row 1: 공통 상태 버튼 (전체 참석, 불참, 미정/대기, 현황 갱신)
   const statusRow = new ActionRowBuilder<ButtonBuilder>();
 
   const allAttendBtn = new ButtonBuilder()
@@ -218,6 +210,92 @@ export function buildPollEmbedAndButtons(poll: FullPollData, creatorDisplayName?
 
   statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn);
   rows.push(statusRow);
+
+  // Row 2~4: 시간대 투표 조작 (1클릭 토글 버튼 그리드 / Multi-Select Menu) (요청사항 2)
+  if (poll.options.length <= 15) {
+    let currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
+
+    poll.options.forEach((opt, idx) => {
+      const allMembers = optionVotesMap[opt.id] || [];
+      const count = allMembers.length;
+      const isFull = count >= 10;
+
+      const btn = new ButtonBuilder()
+        .setCustomId(`vote_${poll.id}_toggle_${opt.id}`)
+        .setLabel(`${opt.label} (${count})`)
+        .setStyle(
+          isFull ? ButtonStyle.Primary : count > 0 ? ButtonStyle.Primary : ButtonStyle.Secondary
+        )
+        .setDisabled(isClosed);
+
+      if (isFull) {
+        btn.setEmoji('⏳');
+      }
+
+      currentBtnRow.addComponents(btn);
+
+      if (currentBtnRow.components.length === 5 || idx === poll.options.length - 1) {
+        rows.push(currentBtnRow);
+        currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
+      }
+    });
+  } else {
+    // 15개 초과 시 Multi-Select Menu + 주요 10개 버튼 배치
+    const voteSelectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`vote_${poll.id}_select`)
+      .setPlaceholder('⏰ 참석 가능한 시간대 선택 (다중 선택 가능)')
+      .setMinValues(1)
+      .setMaxValues(poll.options.length)
+      .setDisabled(isClosed);
+
+    poll.options.forEach((opt) => {
+      const allMembers = optionVotesMap[opt.id] || [];
+      const mainCount = Math.min(allMembers.length, 10);
+      const waitCount = Math.max(0, allMembers.length - 10);
+      let label = `참석: ${opt.label} (${mainCount}/10명)`;
+      if (allMembers.length >= 10) {
+        label = `참석: ${opt.label} (10/10명 마감${waitCount > 0 ? ` | 대기 ${waitCount}명` : ''})`;
+      }
+      voteSelectMenu.addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(label)
+          .setValue(`vote_${poll.id}_attend_${opt.id}`)
+          .setEmoji(allMembers.length >= 10 ? '⏳' : '⏰')
+      );
+    });
+
+    const voteSelectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      voteSelectMenu
+    );
+    rows.push(voteSelectRow);
+
+    let currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
+    const first10Options = poll.options.slice(0, 10);
+    first10Options.forEach((opt, idx) => {
+      const allMembers = optionVotesMap[opt.id] || [];
+      const count = allMembers.length;
+      const isFull = count >= 10;
+
+      const btn = new ButtonBuilder()
+        .setCustomId(`vote_${poll.id}_toggle_${opt.id}`)
+        .setLabel(`${opt.label} (${count})`)
+        .setStyle(
+          isFull ? ButtonStyle.Primary : count > 0 ? ButtonStyle.Primary : ButtonStyle.Secondary
+        )
+        .setDisabled(isClosed);
+
+      if (isFull) {
+        btn.setEmoji('⏳');
+      }
+
+      currentBtnRow.addComponents(btn);
+
+      if (currentBtnRow.components.length === 5 || idx === first10Options.length - 1) {
+        rows.push(currentBtnRow);
+        currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
+      }
+    });
+  }
 
   return { embed, rows };
 }

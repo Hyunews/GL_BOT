@@ -10,11 +10,132 @@ export async function handleButtonInteraction(
   let selectedOptionIds: number[] = [];
 
   if (interaction.isStringSelectMenu()) {
-    // Select Menu에서 클릭/선택된 optionId 목록
-    // Format: vote_{pollId}_attend_{optionId}
     const values = interaction.values;
     if (!values || values.length === 0) return;
+    const customId = interaction.customId;
 
+    // 1. 명단 확인 드롭다운 클릭 시 (Ephemeral 응답)
+    if (customId.includes('_viewroster')) {
+      const parts = values[0].split('_'); // vote_{pollId}_roster_{optId|all}
+      pollId = parseInt(parts[1], 10);
+      const subAction = parts[3]; // 'all' 또는 optionId 문자열
+
+      const poll = await prisma.poll.findUnique({
+        where: { id: pollId },
+        include: { options: true, votes: true },
+      });
+
+      if (!poll) {
+        return interaction.reply({
+          content: '❌ 존재하지 않거나 삭제된 투표입니다.',
+          ephemeral: true,
+        });
+      }
+
+      // 옵션별 참석자 분류
+      const optionVotesMap: Record<number, { userId: string }[]> = {};
+      poll.options.forEach((opt) => {
+        optionVotesMap[opt.id] = [];
+      });
+      const sortedVotes = [...poll.votes].sort((a, b) => a.id - b.id);
+      sortedVotes.forEach((v) => {
+        if (v.status === 'ATTEND' && v.optionId && optionVotesMap[v.optionId]) {
+          if (!optionVotesMap[v.optionId].some((item) => item.userId === v.userId)) {
+            optionVotesMap[v.optionId].push({ userId: v.userId });
+          }
+        }
+      });
+
+      let rosterText = '';
+
+      if (subAction === 'all') {
+        const lines: string[] = [];
+        lines.push(`📋 **${poll.title} 전체 명단 조회**`);
+        lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+        poll.options.forEach((opt) => {
+          const members = optionVotesMap[opt.id] || [];
+          const mainRoster = members.slice(0, 10);
+          const waitlist = members.slice(10);
+
+          if (members.length === 0) {
+            lines.push(`⏰ **${opt.label}** (0명) : _참석자 없음_`);
+          } else {
+            const mainText = mainRoster.map((m, idx) => `${idx + 1}. <@${m.userId}>`).join(', ');
+            let line = `⏰ **${opt.label}** (${members.length}명) : ${mainText}`;
+            if (waitlist.length > 0) {
+              const waitText = waitlist.map((m, idx) => `<@${m.userId}>(대기${idx + 1})`).join(', ');
+              line += `\n> ⏳ **대기 명단**: ${waitText}`;
+            }
+            lines.push(line);
+          }
+        });
+
+        const absentMentions = poll.votes
+          .filter((v) => v.status === 'ABSENT')
+          .map((v) => `<@${v.userId}>`);
+        const pendingMentions = poll.votes
+          .filter((v) => v.status === 'PENDING')
+          .map((v) => `<@${v.userId}>`);
+
+        lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        lines.push(
+          `🔴 **불참** (${absentMentions.length}명): ${
+            absentMentions.length > 0 ? absentMentions.join(', ') : '_없음_'
+          }`
+        );
+        lines.push(
+          `🟡 **미정/대기** (${pendingMentions.length}명): ${
+            pendingMentions.length > 0 ? pendingMentions.join(', ') : '_없음_'
+          }`
+        );
+
+        rosterText = lines.join('\n');
+      } else {
+        const targetOptId = parseInt(subAction, 10);
+        const targetOpt = poll.options.find((o) => o.id === targetOptId);
+        if (targetOpt) {
+          const members = optionVotesMap[targetOptId] || [];
+          const mainRoster = members.slice(0, 10);
+          const waitlist = members.slice(10);
+
+          const lines: string[] = [];
+          lines.push(`⏰ **${targetOpt.label} 상세 명단** (총 ${members.length}명)`);
+          lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+          if (mainRoster.length === 0) {
+            lines.push(`_신청된 참석자가 없습니다._`);
+          } else {
+            lines.push(`✅ **참석 확정 (1~10번)**:`);
+            mainRoster.forEach((m, idx) => {
+              lines.push(`${idx + 1}. <@${m.userId}>`);
+            });
+          }
+
+          if (waitlist.length > 0) {
+            lines.push(`\n⏳ **대기 명단 (11번~)**:`);
+            waitlist.forEach((m, idx) => {
+              lines.push(`${idx + 1}. <@${m.userId}> (대기 ${idx + 1}번)`);
+            });
+          }
+
+          rosterText = lines.join('\n');
+        }
+      }
+
+      if (!rosterText) rosterText = '❌ 명단 정보를 불러올 수 없습니다.';
+
+      if (rosterText.length > 1900) {
+        rosterText = rosterText.substring(0, 1900) + '\n...(내용이 길어 일부 생략되었습니다)';
+      }
+
+      return interaction.reply({
+        content: rosterText,
+        ephemeral: true,
+      });
+    }
+
+    // Select Menu에서 투표 선택 시
     const firstPart = values[0].split('_');
     pollId = parseInt(firstPart[1], 10);
     action = firstPart[2]; // 'attend'
@@ -33,7 +154,7 @@ export async function handleButtonInteraction(
     action = parts[2];
     const optionIdStr = parts[3];
 
-    if (action === 'attend' && optionIdStr) {
+    if ((action === 'attend' || action === 'toggle') && optionIdStr) {
       selectedOptionIds = [parseInt(optionIdStr, 10)];
     }
   }
@@ -77,14 +198,13 @@ export async function handleButtonInteraction(
     .map((v) => v.optionId as number);
 
   // 누적/토글(Merge & Toggle) 로직:
-  // 유저가 기존에 가지고 있던 시간대면 제거(Toggle OFF), 없던 시간대면 추가(Toggle ON)
   const finalOptionSet = new Set<number>(previousOptionIds);
 
   selectedOptionIds.forEach((optId) => {
     if (finalOptionSet.has(optId)) {
-      finalOptionSet.delete(optId); // 이미 선택했던 시간이면 제거
+      finalOptionSet.delete(optId); // 이미 선택했던 시간이면 제거 (Toggle OFF)
     } else {
-      finalOptionSet.add(optId); // 안 고른 시간이면 추가
+      finalOptionSet.add(optId); // 안 고른 시간이면 추가 (Toggle ON)
     }
   });
 
@@ -107,9 +227,8 @@ export async function handleButtonInteraction(
         })),
       }),
     ]);
-  } else if (action === 'attend') {
+  } else if (action === 'attend' || action === 'toggle') {
     if (finalOptionIds.length === 0) {
-      // 선택된 항목이 0개가 되면 참석 내역 지우기
       await prisma.vote.deleteMany({
         where: { pollId: poll.id, userId },
       });
@@ -194,14 +313,13 @@ export async function handleButtonInteraction(
       });
 
     statusMsg = `🟢 **모든 시간대 [전체 참석]으로 등록되었습니다!**\n⏰ **현재 신청 시간대**: ${currentSummaries.join(', ')}`;
-  } else if (action === 'attend') {
+  } else if (action === 'attend' || action === 'toggle') {
     const addedIds = finalOptionIds.filter((id) => !previousOptionIds.includes(id));
     const removedIds = previousOptionIds.filter((id) => !finalOptionIds.includes(id));
 
     const addedLabels = updatedPoll.options.filter((o) => addedIds.includes(o.id)).map((o) => o.label);
     const removedLabels = updatedPoll.options.filter((o) => removedIds.includes(o.id)).map((o) => o.label);
 
-    // 각 신청 시간대별 선착순 10명 이내(참석) vs 11명 이상(대기) 파악
     const currentSummaries = updatedPoll.options
       .filter((o) => finalOptionIds.includes(o.id))
       .map((o) => {
