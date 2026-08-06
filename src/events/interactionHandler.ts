@@ -1,6 +1,6 @@
 import { ButtonInteraction, StringSelectMenuInteraction } from 'discord.js';
 import { prisma } from '../db/client';
-import { buildPollEmbedAndButtons, buildExpandedRosterEmbed } from '../utils/embedBuilder';
+import { buildPollEmbedAndButtons } from '../utils/embedBuilder';
 
 export async function handleButtonInteraction(
   interaction: ButtonInteraction | StringSelectMenuInteraction
@@ -12,130 +12,7 @@ export async function handleButtonInteraction(
   if (interaction.isStringSelectMenu()) {
     const values = interaction.values;
     if (!values || values.length === 0) return;
-    const customId = interaction.customId;
 
-    // 1. 명단 확인 드롭다운 클릭 시 (Ephemeral 응답)
-    if (customId.includes('_viewroster')) {
-      const parts = values[0].split('_'); // vote_{pollId}_roster_{optId|all}
-      pollId = parseInt(parts[1], 10);
-      const subAction = parts[3]; // 'all' 또는 optionId 문자열
-
-      const poll = await prisma.poll.findUnique({
-        where: { id: pollId },
-        include: { options: true, votes: true },
-      });
-
-      if (!poll) {
-        return interaction.reply({
-          content: '❌ 존재하지 않거나 삭제된 투표입니다.',
-          ephemeral: true,
-        });
-      }
-
-      // 옵션별 참석자 분류
-      const optionVotesMap: Record<number, { userId: string }[]> = {};
-      poll.options.forEach((opt) => {
-        optionVotesMap[opt.id] = [];
-      });
-      const sortedVotes = [...poll.votes].sort((a, b) => a.id - b.id);
-      sortedVotes.forEach((v) => {
-        if (v.status === 'ATTEND' && v.optionId && optionVotesMap[v.optionId]) {
-          if (!optionVotesMap[v.optionId].some((item) => item.userId === v.userId)) {
-            optionVotesMap[v.optionId].push({ userId: v.userId });
-          }
-        }
-      });
-
-      let rosterText = '';
-
-      if (subAction === 'all') {
-        const lines: string[] = [];
-        lines.push(`📋 **${poll.title} 전체 명단 조회**`);
-        lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-        poll.options.forEach((opt) => {
-          const members = optionVotesMap[opt.id] || [];
-          const mainRoster = members.slice(0, 10);
-          const waitlist = members.slice(10);
-
-          if (members.length === 0) {
-            lines.push(`⏰ **${opt.label}** (0명) : _참석자 없음_`);
-          } else {
-            const mainText = mainRoster.map((m, idx) => `${idx + 1}. <@${m.userId}>`).join(', ');
-            let line = `⏰ **${opt.label}** (${members.length}명) : ${mainText}`;
-            if (waitlist.length > 0) {
-              const waitText = waitlist.map((m, idx) => `<@${m.userId}>(대기${idx + 1})`).join(', ');
-              line += `\n> ⏳ **대기 명단**: ${waitText}`;
-            }
-            lines.push(line);
-          }
-        });
-
-        const absentMentions = poll.votes
-          .filter((v) => v.status === 'ABSENT')
-          .map((v) => `<@${v.userId}>`);
-        const pendingMentions = poll.votes
-          .filter((v) => v.status === 'PENDING')
-          .map((v) => `<@${v.userId}>`);
-
-        lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        lines.push(
-          `🔴 **불참** (${absentMentions.length}명): ${
-            absentMentions.length > 0 ? absentMentions.join(', ') : '_없음_'
-          }`
-        );
-        lines.push(
-          `🟡 **미정/대기** (${pendingMentions.length}명): ${
-            pendingMentions.length > 0 ? pendingMentions.join(', ') : '_없음_'
-          }`
-        );
-
-        rosterText = lines.join('\n');
-      } else {
-        const targetOptId = parseInt(subAction, 10);
-        const targetOpt = poll.options.find((o) => o.id === targetOptId);
-        if (targetOpt) {
-          const members = optionVotesMap[targetOptId] || [];
-          const mainRoster = members.slice(0, 10);
-          const waitlist = members.slice(10);
-
-          const lines: string[] = [];
-          lines.push(`⏰ **${targetOpt.label} 상세 명단** (총 ${members.length}명)`);
-          lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-          if (mainRoster.length === 0) {
-            lines.push(`_신청된 참석자가 없습니다._`);
-          } else {
-            lines.push(`✅ **참석 확정 (1~10번)**:`);
-            mainRoster.forEach((m, idx) => {
-              lines.push(`${idx + 1}. <@${m.userId}>`);
-            });
-          }
-
-          if (waitlist.length > 0) {
-            lines.push(`\n⏳ **대기 명단 (11번~)**:`);
-            waitlist.forEach((m, idx) => {
-              lines.push(`${idx + 1}. <@${m.userId}> (대기 ${idx + 1}번)`);
-            });
-          }
-
-          rosterText = lines.join('\n');
-        }
-      }
-
-      if (!rosterText) rosterText = '❌ 명단 정보를 불러올 수 없습니다.';
-
-      if (rosterText.length > 1900) {
-        rosterText = rosterText.substring(0, 1900) + '\n...(내용이 길어 일부 생략되었습니다)';
-      }
-
-      return interaction.reply({
-        content: rosterText,
-        ephemeral: true,
-      });
-    }
-
-    // Select Menu에서 투표 선택 시
     const firstPart = values[0].split('_');
     pollId = parseInt(firstPart[1], 10);
     action = firstPart[2]; // 'attend'
@@ -161,6 +38,20 @@ export async function handleButtonInteraction(
 
   if (isNaN(pollId) || pollId <= 0) return;
 
+  // 현재 메시지의 접기/펼치기 상태 파악
+  let isExpanded = false;
+  if (interaction.message && interaction.message.components.length > 0) {
+    const statusRow = interaction.message.components[0] as any;
+    if (statusRow && statusRow.components) {
+      const expandBtn = statusRow.components.find(
+        (c: any) => c.customId && typeof c.customId === 'string' && c.customId.includes('_toggleexpand_')
+      );
+      if (expandBtn && expandBtn.customId?.includes('_close')) {
+        isExpanded = true;
+      }
+    }
+  }
+
   const poll = await prisma.poll.findUnique({
     where: { id: pollId },
     include: { options: true, votes: true },
@@ -173,94 +64,19 @@ export async function handleButtonInteraction(
     });
   }
 
-  // 🔽 사용자 개별 전용 명단 펼치기 클릭 시 (Ephemeral 카드 전송)
-  if (action === 'expand' && interaction.isButton()) {
-    const { embed: expandedEmbed, closeRow } = buildExpandedRosterEmbed(poll);
-    return interaction.reply({
-      embeds: [expandedEmbed],
-      components: [closeRow],
-      ephemeral: true,
-    });
-  }
+  // 🔽 / 🔼 명단 펼치기 / 명단 접기 버튼 클릭 시 (공용 메시지에서 즉시 전환)
+  if (action === 'toggleexpand') {
+    const parts = (interaction.isButton() ? interaction.customId : '').split('_');
+    const targetState = parts[3]; // 'open' or 'close'
+    const newIsExpanded = targetState === 'open';
 
-  // 🔼 사용자 개별 전용 명단 접기 클릭 시 (Ephemeral 카드 접기)
-  if (action === 'close' && interaction.isButton()) {
-    return interaction.update({
-      content: '🔒 명단 카드가 접혔습니다.',
-      embeds: [],
-      components: [],
-    });
-  }
-
-  // 📋 개인 전용 상세 명단 보기 클릭 시 (Ephemeral 응답)
-  if (action === 'roster') {
-    const optionVotesMap: Record<number, { userId: string }[]> = {};
-    poll.options.forEach((opt) => {
-      optionVotesMap[opt.id] = [];
-    });
-    const sortedVotes = [...poll.votes].sort((a, b) => a.id - b.id);
-    sortedVotes.forEach((v) => {
-      if (v.status === 'ATTEND' && v.optionId && optionVotesMap[v.optionId]) {
-        if (!optionVotesMap[v.optionId].some((item) => item.userId === v.userId)) {
-          optionVotesMap[v.optionId].push({ userId: v.userId });
-        }
-      }
-    });
-
-    const lines: string[] = [];
-    lines.push(`📋 **${poll.title} 상세 명단**`);
-    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-    poll.options.forEach((opt) => {
-      const members = optionVotesMap[opt.id] || [];
-      const mainRoster = members.slice(0, 10);
-      const waitlist = members.slice(10);
-
-      if (members.length === 0) {
-        lines.push(`⏰ **${opt.label}** (0명) : _참석자 없음_`);
-      } else {
-        const mainText = mainRoster.map((m, idx) => `${idx + 1}. <@${m.userId}>`).join(', ');
-        let line = `⏰ **${opt.label}** (${members.length}명) : ${mainText}`;
-        if (waitlist.length > 0) {
-          const waitText = waitlist.map((m, idx) => `<@${m.userId}>(대기${idx + 1})`).join(', ');
-          line += `\n> ⏳ **대기 명단**: ${waitText}`;
-        }
-        lines.push(line);
-      }
-    });
-
-    const absentMentions = poll.votes
-      .filter((v) => v.status === 'ABSENT')
-      .map((v) => `<@${v.userId}>`);
-    const pendingMentions = poll.votes
-      .filter((v) => v.status === 'PENDING')
-      .map((v) => `<@${v.userId}>`);
-
-    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    lines.push(
-      `🔴 **불참** (${absentMentions.length}명): ${
-        absentMentions.length > 0 ? absentMentions.join(', ') : '_없음_'
-      }`
-    );
-    lines.push(
-      `🟡 **미정/대기** (${pendingMentions.length}명): ${
-        pendingMentions.length > 0 ? pendingMentions.join(', ') : '_없음_'
-      }`
-    );
-
-    let rosterText = lines.join('\n');
-    if (rosterText.length > 1900) {
-      rosterText = rosterText.substring(0, 1900) + '\n...(내용이 길어 일부 생략되었습니다)';
-    }
-
-    return interaction.reply({
-      content: rosterText,
-      ephemeral: true,
-    });
+    const { embed, rows } = buildPollEmbedAndButtons(poll, undefined, newIsExpanded);
+    await interaction.update({ embeds: [embed], components: rows });
+    return;
   }
 
   if (action === 'refresh') {
-    const { embed, rows } = buildPollEmbedAndButtons(poll);
+    const { embed, rows } = buildPollEmbedAndButtons(poll, undefined, isExpanded);
     await interaction.update({ embeds: [embed], components: rows });
     return;
   }
@@ -374,7 +190,7 @@ export async function handleButtonInteraction(
 
   if (!updatedPoll) return;
 
-  const { embed, rows } = buildPollEmbedAndButtons(updatedPoll);
+  const { embed, rows } = buildPollEmbedAndButtons(updatedPoll, undefined, isExpanded);
 
   // 메시지 갱신 및 유저에게 응답
   await interaction.update({ embeds: [embed], components: rows });
