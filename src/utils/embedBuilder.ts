@@ -194,40 +194,7 @@ export function buildPollEmbedAndButtons(
 
   const rows: ActionRowBuilder<any>[] = [];
 
-  // Row 0: 시간대별 명단 확인 드롭다운 메뉴
-  const rosterSelectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`vote_${poll.id}_viewroster`)
-    .setPlaceholder('🔍 시간대별 참석자/대기자 명단 보기');
-
-  rosterSelectMenu.addOptions(
-    new StringSelectMenuOptionBuilder()
-      .setLabel('📋 [전체] 시간대별 참석자/대기자 명단 보기')
-      .setValue(`vote_${poll.id}_roster_all`)
-      .setDescription('모든 시간대의 상세 참석자 및 대기자 멘션 명단을 확인합니다.')
-      .setEmoji('📋')
-  );
-
-  poll.options.forEach((opt) => {
-    const allMembers = optionVotesMap[opt.id] || [];
-    const waitCount = Math.max(0, allMembers.length - 10);
-    let optLabel = `${opt.label} 명단 (${allMembers.length}명)`;
-    if (allMembers.length >= 10) {
-      optLabel = `${opt.label} 명단 (10명 마감${waitCount > 0 ? `, 대기 ${waitCount}명` : ''})`;
-    }
-    rosterSelectMenu.addOptions(
-      new StringSelectMenuOptionBuilder()
-        .setLabel(optLabel)
-        .setValue(`vote_${poll.id}_roster_${opt.id}`)
-        .setEmoji(allMembers.length >= 10 ? '⏳' : '⏰')
-    );
-  });
-
-  const rosterRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    rosterSelectMenu
-  );
-  rows.push(rosterRow);
-
-  // Row 1: 공통 상태 버튼 + 명단 펼치기/접기 버튼
+  // Row 0: 공통 상태 버튼 + 명단 펼치기/접기 버튼
   const statusRow = new ActionRowBuilder<ButtonBuilder>();
 
   const allAttendBtn = new ButtonBuilder()
@@ -261,8 +228,8 @@ export function buildPollEmbedAndButtons(
   statusRow.addComponents(allAttendBtn, absentBtn, pendingBtn, refreshBtn, toggleExpandBtn);
   rows.push(statusRow);
 
-  // Row 2~4: 시간대 투표 조작 (1클릭 토글 버튼 그리드 / Multi-Select Menu)
-  if (poll.options.length <= 15) {
+  // Row 1~4: 시간대 투표 조작 (1클릭 토글 버튼 그리드 / Multi-Select Menu)
+  if (poll.options.length <= 20) {
     let currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
 
     poll.options.forEach((opt, idx) => {
@@ -290,6 +257,7 @@ export function buildPollEmbedAndButtons(
       }
     });
   } else {
+    // 20개 초과 시 Multi-Select Menu + 주요 15개 버튼 배치
     const voteSelectMenu = new StringSelectMenuBuilder()
       .setCustomId(`vote_${poll.id}_select`)
       .setPlaceholder('⏰ 참석 가능한 시간대 선택 (다중 선택 가능)')
@@ -319,8 +287,8 @@ export function buildPollEmbedAndButtons(
     rows.push(voteSelectRow);
 
     let currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
-    const first10Options = poll.options.slice(0, 10);
-    first10Options.forEach((opt, idx) => {
+    const first15Options = poll.options.slice(0, 15);
+    first15Options.forEach((opt, idx) => {
       const allMembers = optionVotesMap[opt.id] || [];
       const count = allMembers.length;
       const isFull = count >= 10;
@@ -339,7 +307,7 @@ export function buildPollEmbedAndButtons(
 
       currentBtnRow.addComponents(btn);
 
-      if (currentBtnRow.components.length === 5 || idx === first10Options.length - 1) {
+      if (currentBtnRow.components.length === 5 || idx === first15Options.length - 1) {
         rows.push(currentBtnRow);
         currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
       }

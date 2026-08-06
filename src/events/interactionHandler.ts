@@ -163,8 +163,8 @@ export async function handleButtonInteraction(
 
   // 현재 메시지의 접기/펼치기 상태 파악
   let isExpanded = false;
-  if (interaction.message && interaction.message.components.length > 1) {
-    const statusRow = interaction.message.components[1] as any;
+  if (interaction.message && interaction.message.components.length > 0) {
+    const statusRow = interaction.message.components[0] as any;
     if (statusRow && statusRow.components) {
       const expandBtn = statusRow.components.find(
         (c: any) => c.customId && typeof c.customId === 'string' && c.customId.includes('_toggleexpand_')
