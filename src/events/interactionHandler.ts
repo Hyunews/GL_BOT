@@ -130,6 +130,7 @@ export async function handleButtonInteraction(
           userDisplayName,
           status: 'ATTEND',
           optionId: optId,
+          updatedAt: new Date(),
         })),
       }),
     ]);
@@ -150,6 +151,7 @@ export async function handleButtonInteraction(
             userDisplayName,
             status: 'ATTEND',
             optionId: optId,
+            updatedAt: new Date(),
           })),
         }),
       ]);
@@ -194,7 +196,11 @@ export async function handleButtonInteraction(
 
   if (!updatedPoll) return;
 
-  const isEphemeralInteraction = interaction.message?.flags?.has(MessageFlags.Ephemeral);
+  const isEphemeralInteraction =
+    action === 'toggle' ||
+    interaction.customId.includes('_toggle_') ||
+    interaction.customId.includes('_privatetoggleexpand_') ||
+    Boolean(interaction.message?.flags?.has(MessageFlags.Ephemeral));
 
   if (isEphemeralInteraction) {
     // 개인 패널 내의 현재 펼침/접힘 상태 확인

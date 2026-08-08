@@ -47,7 +47,7 @@ model Vote {
   status          String      // "ATTEND" | "ABSENT" | "PENDING"
   optionId        Int?        // ATTEND인 경우 선택한 시간대 옵션 ID
   option          PollOption? @relation(fields: [optionId], references: [id], onDelete: SetNull)
-  updatedAt       DateTime    @updatedAt
+  updatedAt       DateTime    @default(now()) @updatedAt
 
   @@index([pollId, userId])
 }

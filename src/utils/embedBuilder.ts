@@ -320,10 +320,12 @@ export function buildPersonalVotePanel(
     currentBtnRow.addComponents(btn);
 
     if (currentBtnRow.components.length === 5 || idx === poll.options.length - 1) {
-      rows.push(currentBtnRow);
+      if (currentBtnRow.components.length > 0 && rows.length < 5) {
+        rows.push(currentBtnRow);
+      }
       currentBtnRow = new ActionRowBuilder<ButtonBuilder>();
     }
   });
 
-  return { embed, rows };
+  return { embed, rows: rows.slice(0, 5) };
 }
