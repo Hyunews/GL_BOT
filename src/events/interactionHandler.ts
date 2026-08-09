@@ -9,6 +9,7 @@ export async function handleButtonInteraction(
   let action: string = '';
   let selectedOptionIds: number[] = [];
 
+  // ── 커스텀 ID / 드롭다운 값 파싱 (동기 작업, 3초 제한 내 실행) ──
   if (interaction.isStringSelectMenu()) {
     const values = interaction.values;
     if (!values || values.length === 0) return;
@@ -38,26 +39,39 @@ export async function handleButtonInteraction(
 
   if (isNaN(pollId) || pollId <= 0) return;
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 🚨 Discord 3초 응답 제한 대응: DB 작업 전에 반드시 defer 먼저 호출
+  //
+  // - open_panel: 새로운 ephemeral 메시지 전송 → deferReply({ ephemeral: true })
+  // - 나머지 모든 액션: 기존 메시지 수정 → deferUpdate()
+  // ─────────────────────────────────────────────────────────────────────────
+  const isOpenPanelAction =
+    action === 'open' &&
+    interaction.isButton() &&
+    interaction.customId.includes('_open_panel');
+
+  if (isOpenPanelAction) {
+    await interaction.deferReply({ ephemeral: true });
+  } else {
+    await interaction.deferUpdate();
+  }
+
+  // ── DB 조회 (defer 이후이므로 시간 제한 없음) ──
   const poll = await prisma.poll.findUnique({
     where: { id: pollId },
     include: { options: true, votes: true },
   });
 
   if (!poll) {
-    return interaction.reply({
+    return interaction.editReply({
       content: '❌ 존재하지 않거나 삭제된 투표입니다.',
-      ephemeral: true,
     });
   }
 
-  // 1. 🗳️ 내 참석 설정 & 명단 확인 버튼 클릭 시 (개인 전용 에페메랄 패널 생성)
-  if (action === 'open' && interaction.customId.includes('_open_panel')) {
+  // 1. 🗳️ 내 참석 설정 & 명단 확인 버튼 클릭 시 (개인 전용 ephemeral 패널 생성)
+  if (isOpenPanelAction) {
     const { embed, rows } = buildPersonalVotePanel(poll, interaction.user.id, false);
-    return interaction.reply({
-      embeds: [embed],
-      components: rows,
-      ephemeral: true,
-    });
+    return interaction.editReply({ embeds: [embed], components: rows });
   }
 
   // 2. 🔽 / 🔼 개인 패널 내 명단 펼치기/접기 버튼 클릭 시
@@ -67,26 +81,28 @@ export async function handleButtonInteraction(
     const newIsExpanded = targetState === 'open';
 
     const { embed, rows } = buildPersonalVotePanel(poll, interaction.user.id, newIsExpanded);
-    return interaction.update({ embeds: [embed], components: rows });
+    return interaction.editReply({ embeds: [embed], components: rows });
   }
 
   // 3. ❌ 개인 패널 닫기 버튼 클릭 시
   if (action === 'close' && interaction.isButton()) {
-    return interaction.update({
+    return interaction.editReply({
       content: '🔒 개인 패널이 닫혔습니다.',
       embeds: [],
       components: [],
     });
   }
 
+  // 4. 🔄 갱신 버튼
   if (action === 'refresh') {
     const { embed, rows } = buildPollEmbedAndButtons(poll);
-    await interaction.update({ embeds: [embed], components: rows });
+    await interaction.editReply({ embeds: [embed], components: rows });
     return;
   }
 
+  // 마감된 투표: deferUpdate 이후이므로 followUp으로 에러 안내
   if (poll.status === 'CLOSED') {
-    return interaction.reply({
+    return interaction.followUp({
       content: '🔒 이 투표는 이미 마감되었습니다.',
       ephemeral: true,
     });
@@ -198,8 +214,8 @@ export async function handleButtonInteraction(
 
   const isEphemeralInteraction =
     action === 'toggle' ||
-    interaction.customId.includes('_toggle_') ||
-    interaction.customId.includes('_privatetoggleexpand_') ||
+    (interaction.isButton() && interaction.customId.includes('_toggle_')) ||
+    (interaction.isButton() && interaction.customId.includes('_privatetoggleexpand_')) ||
     Boolean(interaction.message?.flags?.has(MessageFlags.Ephemeral));
 
   if (isEphemeralInteraction) {
@@ -220,13 +236,13 @@ export async function handleButtonInteraction(
       }
     }
 
-    // 개인 패널(Ephemeral) 업데이트 -> 파란색/회색 버튼 즉시 토글!
+    // 개인 패널(Ephemeral) 업데이트 → 파란색/회색 버튼 즉시 토글
     const { embed: personalEmbed, rows: personalRows } = buildPersonalVotePanel(
       updatedPoll,
       userId,
       currentIsExpanded
     );
-    await interaction.update({ embeds: [personalEmbed], components: personalRows });
+    await interaction.editReply({ embeds: [personalEmbed], components: personalRows });
 
     // 공용 메시지도 백그라운드에서 실시간 현황 갱신
     try {
@@ -246,7 +262,7 @@ export async function handleButtonInteraction(
 
   // 공용 메시지에서 직접 클릭 시
   const { embed, rows } = buildPollEmbedAndButtons(updatedPoll);
-  await interaction.update({ embeds: [embed], components: rows });
+  await interaction.editReply({ embeds: [embed], components: rows });
 
   let statusMsg = '';
   if (action === 'all') {

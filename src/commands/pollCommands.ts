@@ -65,19 +65,13 @@ export const pollCommandDefinitions = [
 export async function handlePollCommands(interaction: ChatInputCommandInteraction) {
   const { commandName, guildId, guild, channel, user, memberPermissions } = interaction;
 
+  // 동기적 검증 (DB 작업 전, 3초 제한 내 처리)
   if (!guildId || !guild) {
     return interaction.reply({
       content: '❌ 이 명령어는 서버(길드) 내에서만 사용할 수 있습니다.',
       ephemeral: true,
     });
   }
-
-  // Guild DB 동기화
-  await prisma.guild.upsert({
-    where: { id: guildId },
-    update: { name: guild.name },
-    create: { id: guildId, name: guild.name },
-  });
 
   const creatorDisplayName =
     interaction.guild?.members.cache.get(user.id)?.displayName ||
@@ -97,6 +91,7 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
 
     const fullTitle = `${formattedTitle} 길드리그 참석 투표`;
 
+    // 🚨 DB 작업 전에 deferReply 먼저 호출
     await interaction.deferReply();
 
     try {
@@ -145,22 +140,30 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
   } else if (commandName === '투표종료') {
     const pollId = interaction.options.getInteger('투표번호', true);
 
+    // 🚨 DB 작업 전에 deferReply 먼저 호출
+    await interaction.deferReply();
+
+    // Guild DB 동기화
+    await prisma.guild.upsert({
+      where: { id: guildId },
+      update: { name: guild.name },
+      create: { id: guildId, name: guild.name },
+    });
+
     const poll = await prisma.poll.findFirst({
       where: { id: pollId, guildId },
       include: { options: true, votes: true },
     });
 
     if (!poll) {
-      return interaction.reply({
+      return interaction.editReply({
         content: `❌ 해당 투표(#${pollId})를 찾을 수 없습니다.`,
-        ephemeral: true,
       });
     }
 
     if (poll.status === 'CLOSED') {
-      return interaction.reply({
+      return interaction.editReply({
         content: `⚠️ 해당 투표(#${pollId})는 이미 종료된 투표입니다.`,
-        ephemeral: true,
       });
     }
 
@@ -185,11 +188,21 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
       console.warn('이전 메시지 갱신 실패:', e);
     }
 
-    return interaction.reply({
+    return interaction.editReply({
       content: `🔒 투표 **#${pollId} (${poll.title})**가 성공적으로 마감되었습니다.`,
     });
   } else if (commandName === '투표현황') {
-    let pollId = interaction.options.getInteger('투표번호', false);
+    const pollId = interaction.options.getInteger('투표번호', false);
+
+    // 🚨 DB 작업 전에 deferReply 먼저 호출 (ephemeral)
+    await interaction.deferReply({ ephemeral: true });
+
+    // Guild DB 동기화
+    await prisma.guild.upsert({
+      where: { id: guildId },
+      update: { name: guild.name },
+      create: { id: guildId, name: guild.name },
+    });
 
     let poll;
     if (pollId) {
@@ -206,30 +219,38 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
     }
 
     if (!poll) {
-      return interaction.reply({
+      return interaction.editReply({
         content: '❌ 조회할 수 있는 투표가 없습니다.',
-        ephemeral: true,
       });
     }
 
     const { embed, rows } = buildPollEmbedAndButtons(poll, creatorDisplayName);
-    return interaction.reply({
+    return interaction.editReply({
       content: `📊 **투표 #${poll.id} 현황 조회 결과**`,
       embeds: [embed],
       components: rows,
-      ephemeral: true,
     });
   } else if (commandName === '투표삭제') {
     const pollId = interaction.options.getInteger('투표번호', true);
+
+    // 동기적 권한 검사: DB 조회 없이 바로 판단 불가하므로 defer 후 처리
+    // 🚨 DB 작업 전에 deferReply 먼저 호출
+    await interaction.deferReply({ ephemeral: true });
+
+    // Guild DB 동기화
+    await prisma.guild.upsert({
+      where: { id: guildId },
+      update: { name: guild.name },
+      create: { id: guildId, name: guild.name },
+    });
 
     const poll = await prisma.poll.findFirst({
       where: { id: pollId, guildId },
     });
 
     if (!poll) {
-      return interaction.reply({
+      return interaction.editReply({
         content: `❌ 해당 투표(#${pollId})를 찾을 수 없습니다.`,
-        ephemeral: true,
       });
     }
 
@@ -240,9 +261,8 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
       memberPermissions?.has(PermissionFlagsBits.ManageMessages);
 
     if (!isCreator && !isAdmin) {
-      return interaction.reply({
+      return interaction.editReply({
         content: '❌ 이 투표를 삭제할 권한이 없습니다. (투표 작성자 또는 관리자만 삭제 가능)',
-        ephemeral: true,
       });
     }
 
@@ -264,7 +284,7 @@ export async function handlePollCommands(interaction: ChatInputCommandInteractio
       where: { id: pollId },
     });
 
-    return interaction.reply({
+    return interaction.editReply({
       content: `🗑️ 투표 **#${pollId} (${poll.title})**가 성공적으로 삭제되었습니다.`,
     });
   }
