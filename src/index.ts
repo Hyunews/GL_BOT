@@ -34,14 +34,21 @@ app.listen(PORT, () => {
 });
 
 // 2. Discord Client 초기화
-// ℹ️ GuildMembers 인텐트: 서버 닉네임(displayName)을 캐시에서 읽으려면 필요합니다.
-//    Discord 개발자 포털 > Bot > Privileged Gateway Intents > SERVER MEMBERS INTENT 활성화 필수!
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers, // 닉네임 캐시 활성화 (포털에서 특권 인텐트 ON 필요)
+    // GuildMembers 인텐트 제거: 연결 시 전체 멤버 청크 수신을 시도하다 hang 발생 가능
+    // 닉네임은 interaction.user.globalName || username 폴백으로 처리
   ],
+});
+
+// Discord 클라이언트 레벨 에러/경고 수신
+client.on('error', (err) => {
+  console.error('🔥 Discord 클라이언트 오류:', err);
+});
+client.on('warn', (info) => {
+  console.warn('⚠️ Discord 클라이언트 경고:', info);
 });
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -96,7 +103,18 @@ console.log(`🔍 [진단] DATABASE_URL 설정 여부: ${CONFIG.DATABASE_URL ? '
 
 if (CONFIG.DISCORD_TOKEN) {
   console.log('🔑 Discord 로그인 시도 중...');
+
+  // 30초 내 로그인 안 되면 경고 출력 (연결 hang 감지)
+  const loginTimer = setTimeout(() => {
+    console.error('⏰ [경고] 30초 내 Discord 로그인 완료 안 됨. 네트워크/토큰 문제 가능성.');
+  }, 30000);
+
+  client.once(Events.ClientReady, () => {
+    clearTimeout(loginTimer);
+  });
+
   client.login(CONFIG.DISCORD_TOKEN).catch((err) => {
+    clearTimeout(loginTimer);
     console.error('❌ 디스코드 로그인 실패! 토큰을 확인해 주세요:', err);
   });
 } else {
