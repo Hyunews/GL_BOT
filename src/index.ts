@@ -1,6 +1,13 @@
 // 🕐 서버 타임존을 KST(Asia/Seoul)로 고정
-// 클라우드 환경(UTC)에서도 '오늘', '내일' 파싱이 한국 시간 기준으로 동작
 process.env.TZ = 'Asia/Seoul';
+
+// 🔍 진단: 잡히지 않는 예외/거부 전부 출력
+process.on('uncaughtException', (err) => {
+  console.error('🔥 [CRITICAL] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('🔥 [CRITICAL] unhandledRejection:', reason);
+});
 
 import { Client, GatewayIntentBits, Events } from 'discord.js';
 import express from 'express';
@@ -83,7 +90,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // 봇 로그인
+console.log(`🔍 [진단] DISCORD_TOKEN 설정 여부: ${CONFIG.DISCORD_TOKEN ? `YES (길이: ${CONFIG.DISCORD_TOKEN.length})` : 'NO (비어있음)'}`);
+console.log(`🔍 [진단] CLIENT_ID 설정 여부: ${CONFIG.CLIENT_ID ? 'YES' : 'NO'}`);
+console.log(`🔍 [진단] DATABASE_URL 설정 여부: ${CONFIG.DATABASE_URL ? 'YES' : 'NO'}`);
+
 if (CONFIG.DISCORD_TOKEN) {
+  console.log('🔑 Discord 로그인 시도 중...');
   client.login(CONFIG.DISCORD_TOKEN).catch((err) => {
     console.error('❌ 디스코드 로그인 실패! 토큰을 확인해 주세요:', err);
   });
